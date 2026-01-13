@@ -1,0 +1,377 @@
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  PieChart, Pie, Cell
+} from 'recharts';
+import { 
+  Globe, Package, Truck, Activity, MessageSquare, Send, Bot, 
+  Filter, AlertCircle, TrendingUp, Menu, X, ChevronDown
+} from 'lucide-react';
+
+// --- Data Preparation (Derived from Case 2) ---
+const rawData = [
+  { warehouse: "CN004", gb: "AA", region: "AP", country: "CN", inbound: 77, outbound: 41 },
+  { warehouse: "CN005", gb: "PT", region: "AP", country: "CN", inbound: 25971, outbound: 5741 },
+  { warehouse: "CN023", gb: "AA", region: "AP", country: "CN", inbound: 74, outbound: 8 },
+  { warehouse: "CN025", gb: "PT", region: "AP", country: "CN", inbound: 1998, outbound: 819 },
+  { warehouse: "CN032", gb: "AA", region: "AP", country: "CN", inbound: 2, outbound: 0 },
+  { warehouse: "CN034", gb: "PT", region: "AP", country: "CN", inbound: 2855, outbound: 1307 },
+  { warehouse: "CN035", gb: "AA", region: "AP", country: "CN", inbound: 254, outbound: 22 },
+  { warehouse: "CN305", gb: "PT", region: "AP", country: "CN", inbound: 5152, outbound: 1825 },
+  { warehouse: "HK001", gb: "PT", region: "AP", country: "CN", inbound: 1170, outbound: 215 },
+  { warehouse: "JP043", gb: "AA", region: "AP", country: "JP", inbound: 95829, outbound: 15525 },
+  { warehouse: "JP044", gb: "PT", region: "AP", country: "JP", inbound: 62582, outbound: 2056 },
+  { warehouse: "KR001", gb: "PT", region: "AP", country: "KR", inbound: 30043, outbound: 2282 },
+  { warehouse: "TW001", gb: "AA", region: "AP", country: "TW", inbound: 2255, outbound: 1504 },
+  { warehouse: "TW002", gb: "PT", region: "AP", country: "TW", inbound: 5250, outbound: 1747 },
+  { warehouse: "CN072", gb: "AA", region: "AP", country: "CN", inbound: 656, outbound: 27 },
+  { warehouse: "CN073", gb: "AA", region: "AP", country: "CN", inbound: 25, outbound: 8 },
+  { warehouse: "CN116", gb: "AA", region: "AP", country: "CN", inbound: 26, outbound: 0 },
+  { warehouse: "CN200", gb: "AA", region: "AP", country: "CN", inbound: 173, outbound: 15 },
+];
+
+const COLORS = ['#005691', '#008ECF', '#E20015', '#FFD200', '#525F6B'];
+
+const App = () => {
+  const [selectedGb, setSelectedGb] = useState('All');
+  const [isChatOpen, setIsChatOpen] = useState(false); // Mobile chat toggle
+  const [messages, setMessages] = useState([
+    { role: 'assistant', content: '您好！我是博世亚太供应链 AI 助手。我已经分析了最新的 Case 2 数据。您可以问我关于各国业务占比、潜在风险或优化建议的问题。' }
+  ]);
+  const [input, setInput] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const chatEndRef = useRef(null);
+
+  // --- Logic: Filtering and Aggregating ---
+  const filteredData = useMemo(() => {
+    return selectedGb === 'All' ? rawData : rawData.filter(d => d.gb === selectedGb);
+  }, [selectedGb]);
+
+  const countryStats = useMemo(() => {
+    const agg = filteredData.reduce((acc, curr) => {
+      if (!acc[curr.country]) acc[curr.country] = { country: curr.country, inbound: 0, outbound: 0 };
+      acc[curr.country].inbound += curr.inbound;
+      acc[curr.country].outbound += curr.outbound;
+      return acc;
+    }, {});
+    return Object.values(agg).sort((a, b) => b.inbound - a.inbound);
+  }, [filteredData]);
+
+  const gbStats = useMemo(() => {
+    const agg = rawData.reduce((acc, curr) => {
+      if (!acc[curr.gb]) acc[curr.gb] = { name: curr.gb, value: 0 };
+      acc[curr.gb].value += curr.inbound + curr.outbound;
+      return acc;
+    }, {});
+    return Object.values(agg);
+  }, []);
+
+  const totals = useMemo(() => {
+    return countryStats.reduce((acc, curr) => ({
+      inbound: acc.inbound + curr.inbound,
+      outbound: acc.outbound + curr.outbound
+    }), { inbound: 0, outbound: 0 });
+  }, [countryStats]);
+
+  // --- AI Interaction Logic ---
+  const handleSend = async () => {
+    if (!input.trim()) return;
+    const userMsg = { role: 'user', content: input };
+    setMessages(prev => [...prev, userMsg]);
+    setInput('');
+    setIsTyping(true);
+
+    try {
+      const apiKey = ""; 
+      const systemPrompt = `You are an expert Supply Chain Analyst at Bosch APAC (GS/OSD). 
+      You are analyzing Case 2 data:
+      - Total Inbound: ${totals.inbound}
+      - Total Outbound: ${totals.outbound}
+      - Top Countries: ${countryStats.map(c => `${c.country}(In:${c.inbound}, Out:${c.outbound})`).join(', ')}
+      - Current Filter: ${selectedGb}
+      Answer concisely in Chinese. Focus on efficiency, bottlenecks, and data-driven insights. 
+      If there's a huge gap between Inbound and Outbound, highlight the inventory risk.`;
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `User asked: ${input}` }] }],
+          systemInstruction: { parts: [{ text: systemPrompt }] }
+        })
+      });
+
+      const data = await response.json();
+      const aiContent = data.candidates?.[0]?.content?.parts?.[0]?.text || "抱歉，分析遇到一点问题。";
+      setMessages(prev => [...prev, { role: 'assistant', content: aiContent }]);
+    } catch (error) {
+      setMessages(prev => [...prev, { role: 'assistant', content: "网络连接失败，请稍后重试。" }]);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isChatOpen]);
+
+  return (
+    <div className="flex flex-col min-h-screen bg-slate-50 font-sans text-slate-900 overflow-x-hidden">
+      {/* Responsive Header */}
+      <header className="bg-[#005691] text-white px-4 md:px-6 py-4 flex justify-between items-center shadow-md sticky top-0 z-50">
+        <div className="flex items-center gap-3">
+          <div className="bg-white p-2 rounded-lg shrink-0">
+            <Globe className="text-[#005691] w-5 h-5 md:w-6 md:h-6" />
+          </div>
+          <div className="overflow-hidden">
+            <h1 className="text-lg md:text-xl font-bold tracking-tight truncate">Bosch GS/OSD-APAC</h1>
+            <p className="text-[10px] md:text-xs text-blue-100 opacity-80 truncate">Supply Chain Operations Dashboard</p>
+          </div>
+        </div>
+        
+        {/* GB Filter Desktop */}
+        <div className="hidden md:flex items-center gap-4 bg-white/10 px-4 py-2 rounded-full border border-white/20">
+          <Filter className="w-4 h-4" />
+          <span className="text-sm font-medium">Business Unit:</span>
+          <div className="flex gap-1">
+            {['All', 'AA', 'PT'].map(gb => (
+              <button 
+                key={gb}
+                onClick={() => setSelectedGb(gb)}
+                className={`px-3 py-1 rounded-md text-xs transition-all ${selectedGb === gb ? 'bg-white text-[#005691] font-bold shadow-sm' : 'hover:bg-white/20'}`}
+              >
+                {gb}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Mobile Chat Toggle Button */}
+        <button 
+          onClick={() => setIsChatOpen(!isChatOpen)}
+          className="md:hidden p-2 bg-white/20 rounded-lg"
+        >
+          {isChatOpen ? <X className="w-6 h-6" /> : <MessageSquare className="w-6 h-6" />}
+        </button>
+      </header>
+
+      {/* Mobile Filter Bar */}
+      <div className="md:hidden bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-[68px] z-40 shadow-sm">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+          <Filter className="w-4 h-4" />
+          <span>Filter:</span>
+        </div>
+        <div className="flex gap-2">
+          {['All', 'AA', 'PT'].map(gb => (
+            <button 
+              key={gb}
+              onClick={() => setSelectedGb(gb)}
+              className={`px-4 py-1.5 rounded-full text-xs font-bold border transition-all ${
+                selectedGb === gb ? 'bg-[#005691] text-white border-[#005691]' : 'bg-slate-50 text-slate-600 border-slate-200'
+              }`}
+            >
+              {gb}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <main className="flex-1 flex flex-col lg:flex-row p-4 md:p-6 gap-6 relative">
+        {/* Left/Main Section */}
+        <div className="flex-1 flex flex-col gap-6 overflow-hidden">
+          
+          {/* Summary Cards - Grid Responsive */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
+              <div className="bg-blue-50 p-3 rounded-xl shrink-0">
+                <Truck className="text-blue-600 w-6 h-6" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs md:text-sm text-slate-500 font-medium">Total Inbound</p>
+                <p className="text-xl md:text-2xl font-bold truncate">{totals.inbound.toLocaleString()}</p>
+              </div>
+            </div>
+            <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
+              <div className="bg-emerald-50 p-3 rounded-xl shrink-0">
+                <Package className="text-emerald-600 w-6 h-6" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs md:text-sm text-slate-500 font-medium">Total Outbound</p>
+                <p className="text-xl md:text-2xl font-bold truncate">{totals.outbound.toLocaleString()}</p>
+              </div>
+            </div>
+            <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4 sm:col-span-2 lg:col-span-1">
+              <div className="bg-amber-50 p-3 rounded-xl shrink-0">
+                <Activity className="text-amber-600 w-6 h-6" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs md:text-sm text-slate-500 font-medium">Out/In Ratio</p>
+                <p className="text-xl md:text-2xl font-bold truncate">{(totals.outbound / totals.inbound * 100).toFixed(1)}%</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Bar Chart Container */}
+          <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div className="flex flex-col sm:flex-row justify-between items-start gap-2 mb-6">
+              <div>
+                <h2 className="text-base md:text-lg font-bold flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-blue-600" />
+                  Orderline Volume
+                </h2>
+                <p className="text-xs md:text-sm text-slate-500 italic">Inbound vs Outbound comparison</p>
+              </div>
+              <div className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-[10px] md:text-xs font-semibold whitespace-nowrap">
+                Region: APAC
+              </div>
+            </div>
+            <div className="h-[300px] md:h-[400px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={countryStats} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="country" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                  <Tooltip 
+                    contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                    cursor={{fill: '#f8fafc'}}
+                  />
+                  <Legend verticalAlign="top" align="right" iconType="circle" wrapperStyle={{paddingBottom: '20px', fontSize: '12px'}} />
+                  <Bar name="In" dataKey="inbound" fill="#005691" radius={[4, 4, 0, 0]} barSize={20} />
+                  <Bar name="Out" dataKey="outbound" fill="#E20015" radius={[4, 4, 0, 0]} barSize={20} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Pie Chart */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <h2 className="text-base md:text-lg font-bold mb-4">BU Distribution</h2>
+              <div className="h-[200px] md:h-[250px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={gbStats}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={70}
+                      paddingAngle={5}
+                      dataKey="value"
+                    >
+                      {gbStats.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend verticalAlign="bottom" height={36} wrapperStyle={{fontSize: '12px'}}/>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Operational Alerts */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <h2 className="text-base md:text-lg font-bold mb-4 flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-red-500" />
+                Alerts
+              </h2>
+              <div className="space-y-3">
+                <div className="p-3 bg-red-50 border-l-4 border-red-500 rounded-r-lg">
+                  <p className="text-xs font-bold text-red-800">Inventory Risk (JP)</p>
+                  <p className="text-[10px] text-red-700 mt-0.5 leading-tight">Inbound significantly leads Outbound in Japan. Potential overflow.</p>
+                </div>
+                <div className="p-3 bg-blue-50 border-l-4 border-blue-500 rounded-r-lg">
+                  <p className="text-xs font-bold text-blue-800">PT Business Concentration</p>
+                  <p className="text-[10px] text-blue-700 mt-0.5 leading-tight">PT BU contributes over 70% volume. Monitor resource allocation.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* AI Chatbot Section - Responsive Overlay/Sidebar */}
+        <div className={`
+          fixed inset-0 z-50 bg-slate-900/40 transition-opacity lg:relative lg:inset-auto lg:bg-transparent lg:z-0 lg:opacity-100
+          ${isChatOpen ? 'opacity-100 visible' : 'opacity-0 invisible lg:visible'}
+        `}>
+          <div className={`
+            absolute right-0 bottom-0 top-0 w-[85%] sm:w-80 md:w-96 bg-white shadow-2xl lg:shadow-xl lg:rounded-2xl border-l lg:border border-slate-200 flex flex-col transition-transform duration-300 transform
+            ${isChatOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}
+            lg:h-[calc(100vh-160px)] lg:sticky lg:top-32
+          `}>
+            {/* Mobile Chat Header Close */}
+            <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-[#005691] flex items-center justify-center shrink-0">
+                  <Bot className="text-white w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold">Supply Chain AI</p>
+                  <p className="text-[9px] text-slate-500 uppercase font-bold tracking-wider">Expert Analyst Online</p>
+                </div>
+              </div>
+              <button onClick={() => setIsChatOpen(false)} className="lg:hidden p-1 text-slate-400">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Chat Messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
+              {messages.map((m, i) => (
+                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] p-3 rounded-2xl text-xs md:text-sm ${
+                    m.role === 'user' 
+                      ? 'bg-[#005691] text-white rounded-tr-none shadow-sm' 
+                      : 'bg-slate-100 text-slate-700 rounded-tl-none border border-slate-200'
+                  }`}>
+                    {m.content}
+                  </div>
+                </div>
+              ))}
+              {isTyping && (
+                <div className="flex justify-start">
+                  <div className="bg-slate-100 p-3 rounded-2xl rounded-tl-none border border-slate-200 flex gap-1">
+                    <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></span>
+                    <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-75"></span>
+                    <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-150"></span>
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Input Area */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200">
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                  placeholder="提问业务量分析..."
+                  className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#005691]"
+                />
+                <button 
+                  onClick={handleSend}
+                  disabled={isTyping}
+                  className="bg-[#005691] text-white p-2 rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-sm"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-2 text-center italic">AI Analysis for Case 2 Operations</p>
+            </div>
+          </div>
+        </div>
+      </main>
+      
+      {/* Footer Info Mobile Only */}
+      <footer className="md:hidden p-4 bg-white border-t border-slate-200 text-center">
+        <p className="text-[10px] text-slate-400 font-medium">© 2024 Bosch APAC Operations · GS/OSD</p>
+      </footer>
+    </div>
+  );
+};
+
+export default App;
